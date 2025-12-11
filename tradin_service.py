@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from models import Wallet, Position, Trade
-from alpaca_client import get_quote, place_market_order
+from alpaca_client import get_quote, place_market_order, cancel_all_orders
 
 def get_or_create_wallet(db: Session, user_id: int) -> Wallet:
     wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
@@ -36,42 +36,58 @@ def get_portfolio(db: Session, user_id: int):
     return wallet, positions
 
 
-def execute_trade(db: Session, user_id: int, symbol: str, qty: float, side: str):
+def execute_trade(db: Session, user_id: int, symbol: str, amount: float, side: str):
     """
     1. Get price from Alpaca
-    2. Check wallet balance (for buy)
-    3. Place order (Alpaca)
-    4. Update wallet + positions
-    5. Save Trade
+    2. Calculate quantity from dollar amount
+    3. Check wallet balance (for buy)
+    4. Place order (Alpaca)
+    5. Update wallet + positions
+    6. Save Trade
     """
     price = get_quote(symbol)
     if price is None:
         raise ValueError("Failed to get live price")
 
+    # Calculate quantity from dollar amount
+    qty = amount / price
     wallet = get_or_create_wallet(db, user_id)
-    cost = price * qty
+    cost = amount  # Use the exact dollar amount
 
     if side == "buy":
-        if wallet.balance < cost:
+        if wallet.balance < amount:
             raise ValueError("Insufficient wallet balance")
-        wallet.balance -= cost
+        wallet.balance -= amount
     elif side == "sell":
-        # Check position
+        # For sell orders, amount represents dollar value to sell
+        # Calculate how many shares to sell based on dollar amount
         position = db.query(Position).filter(
             Position.user_id == user_id,
             Position.symbol == symbol.upper()
         ).first()
-        if not position or position.quantity < qty:
-            raise ValueError("Insufficient position to sell")
-        # Add to wallet
-        wallet.balance += cost
+        if not position:
+            raise ValueError("No position found to sell")
+        
+        # Calculate shares to sell based on dollar amount
+        qty = amount / price
+        if position.quantity < qty:
+            raise ValueError(f"Insufficient shares. You have {position.quantity}, trying to sell {qty}")
+        
+        # Add exact dollar amount to wallet
+        wallet.balance += amount
     else:
         raise ValueError("Invalid side, must be 'buy' or 'sell'")
 
     # Place order in Alpaca
     alpaca_order = place_market_order(symbol, qty, side)
     if alpaca_order is None:
-        raise ValueError("Alpaca order failed")
+        # Try cancelling existing orders and retry once
+        print(f"Order failed, trying to cancel existing orders and retry...")
+        cancel_all_orders()
+        alpaca_order = place_market_order(symbol, qty, side)
+        
+        if alpaca_order is None:
+            raise ValueError(f"Alpaca order failed for {side} {qty} {symbol}. Check if fractional trading is enabled or wait before trading the same stock.")
 
     # Update positions
     position = db.query(Position).filter(
@@ -106,7 +122,7 @@ def execute_trade(db: Session, user_id: int, symbol: str, qty: float, side: str)
         side=side,
         qty=qty,
         price=price,
-        order_id=alpaca_order.get("id"),
+        order_id=alpaca_order.get("id", f"order_{symbol}_{int(qty*1000)}"),
         status=alpaca_order.get("status", "filled")
     )
     db.add(trade)

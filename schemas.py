@@ -17,7 +17,7 @@ class WithdrawRequest(BaseModel):
 class TradeRequest(BaseModel):
     user_id: int
     symbol: str
-    qty: float = Field(gt=0)
+    amount: float = Field(gt=0, description="Dollar amount to invest")
     side: str  # "buy" or "sell"
 
 class WalletResponse(BaseModel):

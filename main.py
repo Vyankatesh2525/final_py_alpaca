@@ -133,14 +133,14 @@ def get_user_portfolio(user_id: int = None, db: Session = Depends(get_db)):
 @app.post("/trades", response_model=WalletResponse)
 def place_trade(body: TradeRequest, db: Session = Depends(get_db)):
     """
-    Buy or sell using wallet balance + Alpaca.
+    Buy or sell using dollar amount + Alpaca.
     """
     try:
         wallet = execute_trade(
             db,
             user_id=body.user_id,
             symbol=body.symbol,
-            qty=body.qty,
+            amount=body.amount,
             side=body.side.lower(),
         )
         return WalletResponse(balance=wallet.balance)
