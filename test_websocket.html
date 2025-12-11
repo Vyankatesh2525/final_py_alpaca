@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Clau Trading - Real-time Prices</title>
+</head>
+<body>
+    <h1>Real-time Stock Prices</h1>
+    <div>
+        <input type="text" id="symbolInput" placeholder="Enter symbol (e.g., AAPL)" />
+        <button onclick="subscribe()">Subscribe</button>
+        <button onclick="unsubscribe()">Unsubscribe</button>
+    </div>
+    <div id="prices"></div>
+
+    <script>
+        const ws = new WebSocket("ws://localhost:8001/ws/prices");
+        const pricesDiv = document.getElementById('prices');
+
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            const timestamp = new Date().toLocaleTimeString();
+            
+            if (data.type === 'price_update') {
+                pricesDiv.innerHTML += `<p>${timestamp} - ${data.symbol}: $${data.price}</p>`;
+            } else {
+                pricesDiv.innerHTML += `<p>${timestamp} - ${data.message}</p>`;
+            }
+        };
+
+        function subscribe() {
+            const symbol = document.getElementById('symbolInput').value;
+            if (symbol) {
+                ws.send(JSON.stringify({type: 'subscribe', symbol: symbol}));
+            }
+        }
+
+        function unsubscribe() {
+            const symbol = document.getElementById('symbolInput').value;
+            if (symbol) {
+                ws.send(JSON.stringify({type: 'unsubscribe', symbol: symbol}));
+            }
+        }
+    </script>
+</body>
+</html>
