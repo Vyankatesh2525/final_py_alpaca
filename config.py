@@ -32,3 +32,13 @@ if not JWT_SECRET_KEY:
 TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY")
 if not TOKEN_ENCRYPTION_KEY:
     raise RuntimeError("TOKEN_ENCRYPTION_KEY environment variable is not set")
+
+# Validate required service credentials on startup
+if DATABASE_URL == "postgresql+psycopg2://user:password@localhost:5432/clau_trading_db":
+    raise RuntimeError("DATABASE_URL must be set — default placeholder is not a valid production value")
+
+if not ALPACA_API_KEY:
+    raise RuntimeError("ALPACA_API_KEY environment variable is not set")
+
+if not STRIPE_SECRET_KEY:
+    raise RuntimeError("STRIPE_SECRET_KEY environment variable is not set")

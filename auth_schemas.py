@@ -12,8 +12,16 @@ class SignupRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     access_token: str
+    refresh_token: str
     user_id: int
     message: str
 
 class SignupResponse(BaseModel):
+    message: str
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+class RefreshTokenResponse(BaseModel):
+    access_token: str
     message: str

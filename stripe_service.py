@@ -1,8 +1,10 @@
-# stripe_service.py - Stripe payment processing for Clau Trading Backend, including payment intent creation, confirmation, and connected account management.
+# stripe_service.py - Stripe payment processing for Clau Trading Backend.
+import logging
 import stripe
 from config import STRIPE_SECRET_KEY
 
-stripe.api_key = STRIPE_SECRET_KEY  # make sure this is your sk_test_ key
+logger = logging.getLogger(__name__)
+stripe.api_key = STRIPE_SECRET_KEY
 
 def create_payment_intent(amount: float, currency: str = "usd") -> dict:
     """
@@ -26,27 +28,25 @@ def create_payment_intent(amount: float, currency: str = "usd") -> dict:
             "status": "failed"
         }
 
-def confirm_payment(payment_intent_id: str) -> dict:
+def confirm_payment(payment_intent_id: str, payment_method_id: str) -> dict:
     """
-    Confirm payment in TEST mode using Stripe's built-in test card.
+    Confirm a Stripe PaymentIntent with the client-supplied payment method.
+    The payment_method_id is obtained from Stripe.js / Stripe SDK on the client.
     """
     try:
         intent = stripe.PaymentIntent.confirm(
             payment_intent_id,
-            payment_method="pm_card_visa"  # ✅ valid test payment method
+            payment_method=payment_method_id,
         )
-        
         return {
             "status": intent.status,
             "amount": intent.amount / 100,
-            "payment_intent_id": intent.id
+            "payment_intent_id": intent.id,
         }
     except stripe.error.StripeError as e:
-        print("Stripe error:", e)
-        print("User message:", getattr(e, "user_message", None))
         return {
             "error": str(e),
-            "status": "failed"
+            "status": "failed",
         }
 
 def create_connected_account(email: str) -> dict:
@@ -114,8 +114,7 @@ def fund_test_account(stripe_account_id: str, amount: float) -> dict:
     Add test balance to connected account (TEST MODE ONLY).
     """
     try:
-        # In test mode, add balance to the connected account
-        print(f"Funding account {stripe_account_id} with ${amount}")
+        logger.info("Funding connected account: %s", stripe_account_id)
         stripe.TestHelpers.Fund.create(
             destination_account=stripe_account_id,
             amount=int(amount * 100),  # dollars -> cents
@@ -126,7 +125,7 @@ def fund_test_account(stripe_account_id: str, amount: float) -> dict:
             "amount": amount
         }
     except stripe.error.StripeError as e:
-        print(f"Fund error: {str(e)}")
+        logger.error("Stripe fund error: %s", e)
         return {
             "error": str(e),
             "status": "failed"
@@ -137,8 +136,6 @@ def create_payout_to_user(stripe_account_id: str, amount: float, currency: str =
     Create a payout from the user's connected account to their bank.
     """
     try:
-        # Create payout directly (Stripe will handle balance in test mode)
-        print(f"Creating payout for ${amount}...")
         payout = stripe.Payout.create(
             amount=int(amount * 100),  # dollars -> cents
             currency=currency,
@@ -153,8 +150,7 @@ def create_payout_to_user(stripe_account_id: str, amount: float, currency: str =
             "arrival_date": payout.arrival_date,
         }
     except stripe.error.StripeError as e:
-        print("Stripe payout error:", e)
-        print("User message:", getattr(e, "user_message", None))
+        logger.error("Stripe payout error: %s", e)
         return {
             "error": str(e),
             "status": "failed"

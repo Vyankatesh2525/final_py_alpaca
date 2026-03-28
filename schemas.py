@@ -1,25 +1,25 @@
 # schemas.py - Pydantic schemas for request and response models in Clau Trading Backend.
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Literal
+import re
 
 class DepositRequest(BaseModel):
-    amount: float = Field(gt=0, description="Amount to deposit in USD")
+    amount: float = Field(gt=0, le=100000, description="Amount to deposit in USD")
 
 class StripeDepositRequest(BaseModel):
-    amount: float = Field(gt=0, description="Amount to deposit in USD")
+    amount: float = Field(gt=0, le=100000, description="Amount to deposit in USD")
 
 class ConfirmPaymentRequest(BaseModel):
-    payment_intent_id: str
-    user_id: int
+    payment_intent_id: str = Field(min_length=1, max_length=100)
+    payment_method_id: str = Field(min_length=1, max_length=100)
 
 class WithdrawRequest(BaseModel):
-    amount: float = Field(gt=0, description="Amount to withdraw in USD")
+    amount: float = Field(gt=0, le=100000, description="Amount to withdraw in USD")
 
 class TradeRequest(BaseModel):
-    user_id: int
-    symbol: str
-    amount: float = Field(gt=0, description="Dollar amount to invest")
-    side: str  # "buy" or "sell"
+    symbol: str = Field(min_length=1, max_length=10, pattern=r"^[A-Z0-9/]+$")
+    amount: float = Field(gt=0, le=1000000, description="Dollar amount to invest")
+    side: Literal["buy", "sell"]
 
 class WalletResponse(BaseModel):
     balance: float

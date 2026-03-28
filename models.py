@@ -32,7 +32,7 @@ class Trade(Base):
     __tablename__ = "trades"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     symbol = Column(String, index=True)
     side = Column(String)  # "buy" or "sell"
     qty = Column(Numeric(18, 8))
@@ -46,7 +46,7 @@ class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     payment_intent_id = Column(String, unique=True, index=True)
     amount = Column(Numeric(18, 2))
     status = Column(String)  # "pending", "succeeded", "failed"
