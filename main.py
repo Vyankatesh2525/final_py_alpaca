@@ -1,7 +1,12 @@
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
+# main.py
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy.orm import Session
 import json
 import asyncio
+import requests
 from database import Base, engine, get_db
 from schemas import (
     DepositRequest,
@@ -19,48 +24,136 @@ from auth_utils import hash_password, verify_password, create_access_token, get_
 from tradin_service import deposit, withdraw, get_portfolio, execute_trade
 from stripe_service import create_payment_intent, confirm_payment, create_connected_account, attach_test_bank_account, create_payout_to_user, fund_test_account
 from websocket_service import manager, price_updater
+from models import AlpacaToken
+from crypto_utils import encrypt_token, decrypt_token
+from config import ALPACA_CLIENT_ID, ALPACA_CLIENT_SECRET, ALPACA_REDIRECT_URI, ALPACA_TOKEN_URL
+from pydantic import BaseModel
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Clau Trading Backend")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Create tables
 Base.metadata.create_all(bind=engine)
 
-# Start price updater background task
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(price_updater())
 
+
+# ---------------------------------------------------------------------------
+# Health
+# ---------------------------------------------------------------------------
 
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
 
 
+# ---------------------------------------------------------------------------
+# Alpaca Connect (OAuth)
+# ---------------------------------------------------------------------------
+
+class AlpacaConnectRequest(BaseModel):
+    code: str  # auth code from the OAuth callback
+
+
+class AlpacaConnectStatus(BaseModel):
+    connected: bool
+
+
+@app.post("/alpaca/connect")
+def alpaca_connect(
+    body: AlpacaConnectRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Exchange the OAuth authorization code for an access token and store it
+    against the authenticated user. Called by the Android app immediately
+    after the WebView completes the Alpaca Connect flow.
+    """
+    resp = requests.post(
+        ALPACA_TOKEN_URL,
+        data={
+            "grant_type": "authorization_code",
+            "code": body.code,
+            "client_id": ALPACA_CLIENT_ID,
+            "client_secret": ALPACA_CLIENT_SECRET,
+            "redirect_uri": ALPACA_REDIRECT_URI,
+        },
+        timeout=15,
+    )
+
+    if not resp.ok:
+        print("Alpaca token exchange error:", resp.status_code, resp.text)
+        raise HTTPException(status_code=400, detail="Failed to exchange Alpaca authorization code")
+
+    token_data = resp.json()
+    access_token = token_data.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=400, detail="No access token in Alpaca response")
+
+    # Upsert — one row per user, replace if they reconnect
+    record = db.query(AlpacaToken).filter(AlpacaToken.user_id == user_id).first()
+    encrypted = encrypt_token(access_token)
+    if record:
+        record.access_token = encrypted
+        record.refresh_token = token_data.get("refresh_token")
+    else:
+        record = AlpacaToken(
+            user_id=user_id,
+            access_token=encrypted,
+            refresh_token=token_data.get("refresh_token"),
+        )
+        db.add(record)
+
+    db.commit()
+    return {"message": "Alpaca account connected successfully"}
+
+
+@app.get("/alpaca/status", response_model=AlpacaConnectStatus)
+def alpaca_status(
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Check whether the authenticated user has a connected Alpaca account."""
+    record = db.query(AlpacaToken).filter(AlpacaToken.user_id == user_id).first()
+    return AlpacaConnectStatus(connected=record is not None)
+
+
+@app.delete("/alpaca/disconnect")
+def alpaca_disconnect(
+    user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Remove the stored Alpaca token, effectively disconnecting the account."""
+    record = db.query(AlpacaToken).filter(AlpacaToken.user_id == user_id).first()
+    if record:
+        db.delete(record)
+        db.commit()
+    return {"message": "Alpaca account disconnected"}
+
+
+# ---------------------------------------------------------------------------
+# Wallet
+# ---------------------------------------------------------------------------
+
 @app.post("/wallet/deposit", response_model=WalletResponse)
 def deposit_money(body: DepositRequest, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    """
-    Fake deposit for testing (no Stripe).
-    """
     wallet = deposit(db, user_id, body.amount)
     return WalletResponse(balance=wallet.balance)
 
 
 @app.post("/stripe/create-payment-intent")
 def create_stripe_payment_intent(body: StripeDepositRequest):
-    """
-    Create a Stripe payment intent for deposit.
-    """
     result = create_payment_intent(body.amount)
     return result
 
 
 @app.post("/stripe/confirm-payment", response_model=WalletResponse)
 def confirm_stripe_payment(body: ConfirmPaymentRequest, db: Session = Depends(get_db)):
-    """
-    Confirm Stripe payment and add money to wallet.
-    """
     payment_result = confirm_payment(body.payment_intent_id)
-    
     if payment_result.get("status") == "succeeded":
         amount = payment_result.get("amount", 0)
         wallet = deposit(db, body.user_id, amount)
@@ -72,26 +165,21 @@ def confirm_stripe_payment(body: ConfirmPaymentRequest, db: Session = Depends(ge
 @app.post("/wallet/withdraw", response_model=WalletResponse)
 def withdraw_money(body: WithdrawRequest, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     from models import Wallet
-    
-    # Get wallet
+
     wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
     if not wallet or wallet.balance < body.amount:
         raise HTTPException(status_code=400, detail="Insufficient balance")
-    
+
     try:
-        # Use existing Stripe connected account
         if not wallet.stripe_account_id:
-            # Use your existing connected account
             wallet.stripe_account_id = "acct_1Sd31uCfyiF2HfaC"
             print(f"Using existing Stripe account: {wallet.stripe_account_id}")
             db.commit()
-        
-        # Create payout
+
         print(f"Creating payout of ${body.amount} for account {wallet.stripe_account_id}")
         payout_result = create_payout_to_user(wallet.stripe_account_id, body.amount)
-        
+
         if payout_result.get("status") in ["paid", "pending"]:
-            # Decrease wallet balance
             wallet.balance -= body.amount
             db.commit()
             print(f"Payout successful! New balance: {wallet.balance}")
@@ -99,41 +187,39 @@ def withdraw_money(body: WithdrawRequest, user_id: int = Depends(get_current_use
         else:
             print(f"Payout failed: {payout_result.get('error')}")
             raise HTTPException(status_code=400, detail=f"Payout failed: {payout_result.get('error')}")
-            
+
     except HTTPException:
         raise
     except Exception as e:
         import traceback
-        error_details = traceback.format_exc()
         print(f"Unexpected error: {str(e)}")
-        print(f"Full traceback: {error_details}")
+        print(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Withdrawal failed: {str(e)}")
 
 
+# ---------------------------------------------------------------------------
+# Portfolio & Trading
+# ---------------------------------------------------------------------------
+
 @app.get("/portfolio", response_model=PortfolioResponse)
 def get_user_portfolio(user_id: int = None, db: Session = Depends(get_db)):
-    # Accept user_id as query parameter for testing
     if user_id is None:
         raise HTTPException(status_code=400, detail="user_id is required")
-    
     wallet, positions = get_portfolio(db, user_id)
     return PortfolioResponse(
         balance=wallet.balance,
         positions=[
-            PositionResponse(
-                symbol=p.symbol,
-                quantity=p.quantity,
-                avg_price=p.avg_price
-            )
+            PositionResponse(symbol=p.symbol, quantity=p.quantity, avg_price=p.avg_price)
             for p in positions
-        ]
+        ],
     )
 
 
 @app.post("/trades", response_model=WalletResponse)
 def place_trade(body: TradeRequest, db: Session = Depends(get_db)):
     """
-    Buy or sell using dollar amount + Alpaca.
+    Buy or sell using dollar amount.
+    Requires the user to have a connected Alpaca account (/alpaca/connect).
     """
     try:
         wallet = execute_trade(
@@ -148,6 +234,42 @@ def place_trade(body: TradeRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# ---------------------------------------------------------------------------
+# Prices
+# ---------------------------------------------------------------------------
+
+@app.get("/prices/{symbol}")
+def get_current_price(symbol: str):
+    from alpaca_client import get_quote
+    price = get_quote(symbol)
+    if price:
+        return {"symbol": symbol.upper(), "price": price}
+    raise HTTPException(status_code=404, detail="Price not found")
+
+
+@app.get("/prices/{symbol}/daily")
+def get_daily_price_data(symbol: str):
+    from alpaca_client import get_quote
+    current_price = get_quote(symbol)
+    if current_price:
+        import random
+        previous_close = current_price * (0.95 + random.random() * 0.1)
+        daily_change = current_price - previous_close
+        daily_change_percent = (daily_change / previous_close) * 100
+        return {
+            "symbol": symbol.upper(),
+            "current_price": current_price,
+            "previous_close": previous_close,
+            "daily_change": daily_change,
+            "daily_change_percent": daily_change_percent,
+        }
+    raise HTTPException(status_code=404, detail="Price not found")
+
+
+# ---------------------------------------------------------------------------
+# WebSocket
+# ---------------------------------------------------------------------------
+
 @app.websocket("/ws/prices")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
@@ -155,107 +277,58 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
-            
+
             if message["type"] == "subscribe":
                 symbol = message["symbol"]
                 manager.subscribe_symbol(websocket, symbol)
                 await manager.send_personal_message(
-                    json.dumps({
-                        "type": "subscribed",
-                        "symbol": symbol.upper(),
-                        "message": f"Subscribed to {symbol.upper()} price updates"
-                    }),
-                    websocket
+                    json.dumps({"type": "subscribed", "symbol": symbol.upper(), "message": f"Subscribed to {symbol.upper()} price updates"}),
+                    websocket,
                 )
-            
             elif message["type"] == "unsubscribe":
                 symbol = message["symbol"]
                 manager.unsubscribe_symbol(websocket, symbol)
                 await manager.send_personal_message(
-                    json.dumps({
-                        "type": "unsubscribed",
-                        "symbol": symbol.upper(),
-                        "message": f"Unsubscribed from {symbol.upper()} price updates"
-                    }),
-                    websocket
+                    json.dumps({"type": "unsubscribed", "symbol": symbol.upper(), "message": f"Unsubscribed from {symbol.upper()} price updates"}),
+                    websocket,
                 )
-                
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
 
-@app.get("/prices/{symbol}")
-def get_current_price(symbol: str):
-    """Get current price for a symbol (REST endpoint)"""
-    from alpaca_client import get_quote
-    price = get_quote(symbol)
-    if price:
-        return {"symbol": symbol.upper(), "price": price}
-    else:
-        raise HTTPException(status_code=404, detail="Price not found")
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
 
-@app.get("/prices/{symbol}/daily")
-def get_daily_price_data(symbol: str):
-    """Get current and previous close prices for daily change calculation"""
-    from alpaca_client import get_quote
-    current_price = get_quote(symbol)
-    if current_price:
-        # Simulate previous close (in production, use real historical data)
-        import random
-        previous_close = current_price * (0.95 + random.random() * 0.1)
-        daily_change = current_price - previous_close
-        daily_change_percent = (daily_change / previous_close) * 100
-        
-        return {
-            "symbol": symbol.upper(),
-            "current_price": current_price,
-            "previous_close": previous_close,
-            "daily_change": daily_change,
-            "daily_change_percent": daily_change_percent
-        }
-    else:
-        raise HTTPException(status_code=404, detail="Price not found")
-
-
-# Authentication endpoints
 @app.post("/auth/login", response_model=LoginResponse)
-def login(request: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == request.username).first()
-    
-    if not user or not verify_password(request.password, user.password_hash):
+@limiter.limit("5/minute")
+def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == body.username).first()
+    if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
     token = create_access_token({"user_id": user.id})
-    return LoginResponse(
-        access_token=token,
-        user_id=user.id,
-        message="Login successful"
-    )
+    return LoginResponse(access_token=token, user_id=user.id, message="Login successful")
+
 
 @app.post("/auth/signup", response_model=SignupResponse)
-def signup(request: SignupRequest, db: Session = Depends(get_db)):
-    if db.query(User).filter(User.username == request.username).first():
+@limiter.limit("3/minute")
+def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db)):
+    if db.query(User).filter(User.username == body.username).first():
         raise HTTPException(status_code=400, detail="Username already exists")
-    
-    user = User(
-        username=request.username,
-        email=request.email,
-        password_hash=hash_password(request.password)
-    )
+
+    user = User(username=body.username, email=body.email, password_hash=hash_password(body.password))
     db.add(user)
     db.commit()
     db.refresh(user)
-    
-    # Create wallet for new user only if it doesn't exist
+
     from models import Wallet
-    existing_wallet = db.query(Wallet).filter(Wallet.user_id == user.id).first()
-    if not existing_wallet:
-        wallet = Wallet(user_id=user.id, balance=0.0)
-        db.add(wallet)
+    if not db.query(Wallet).filter(Wallet.user_id == user.id).first():
+        db.add(Wallet(user_id=user.id, balance=0.0))
         db.commit()
-    
+
     return SignupResponse(message="User created successfully")
+
 
 @app.get("/")
 def root():
-    return {"message": "Clau Trading API", "status": "running", "features": ["trading", "payments", "real-time-prices", "authentication"]}
+    return {"message": "Clau Trading API", "status": "running", "features": ["trading", "payments", "real-time-prices", "authentication", "alpaca-connect"]}

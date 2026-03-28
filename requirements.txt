@@ -1,4 +1,5 @@
 fastapi
+slowapi
 uvicorn[standard]
 SQLAlchemy
 psycopg2-binary
@@ -10,3 +11,4 @@ alpaca-py
 passlib[bcrypt]
 python-jose[cryptography]
 bcrypt>=4.0.0
+cryptography

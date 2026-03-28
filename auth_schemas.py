@@ -1,3 +1,4 @@
+# auth_schemas.py - Pydantic schemas for authentication requests and responses in Clau Trading Backend.
 from pydantic import BaseModel
 
 class LoginRequest(BaseModel):

@@ -1,3 +1,4 @@
+# websocket_service.py - WebSocket connection manager for Clau Trading Backend, handling client connections, symbol subscriptions, and real-time price updates using Alpaca API.
 import asyncio
 import json
 from typing import Dict, Set

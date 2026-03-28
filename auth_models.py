@@ -1,3 +1,4 @@
+# auth_models.py - SQLAlchemy models for user authentication in Clau Trading Backend.
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -15,3 +16,4 @@ class User(Base):
     # Relationships
     wallet = relationship("Wallet", back_populates="user", uselist=False)
     positions = relationship("Position", back_populates="user")
+    alpaca_token = relationship("AlpacaToken", back_populates="user", uselist=False)

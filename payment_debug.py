@@ -1,3 +1,4 @@
+# payment_debug.py - Utility functions for logging payment attempts in Clau Trading Backend.
 from sqlalchemy.orm import Session
 from models import Payment
 from database import SessionLocal

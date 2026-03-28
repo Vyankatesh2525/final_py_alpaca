@@ -1,3 +1,4 @@
+# test_stripe.py - Test script for Stripe integration in Clau Trading Backend, including connected account creation and bank account attachment.
 from stripe_service import create_connected_account, attach_test_bank_account
 
 # Test creating connected account
