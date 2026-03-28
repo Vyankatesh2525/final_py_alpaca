@@ -1,82 +1,79 @@
+# alpaca_client.py
 import requests
+from decimal import Decimal
 from config import ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_BASE_URL
 
-HEADERS = {
+# --- Static-key headers (market data only) ---
+
+_STATIC_HEADERS = {
     "APCA-API-KEY-ID": ALPACA_API_KEY,
     "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY,
 }
 
-def get_quote(symbol: str) -> float | None:
-    """
-    Get latest trade price (LTP) for symbol.
-    """
+
+def _trading_headers(access_token: str) -> dict:
+    """Build Authorization header for a per-user Connect token."""
+    return {"Authorization": f"Bearer {access_token}"}
+
+
+# ---------------------------------------------------------------------------
+# Market data — always uses static keys, no user token needed
+# ---------------------------------------------------------------------------
+
+def get_quote(symbol: str) -> Decimal | None:
+    """Get latest trade price for a symbol."""
     url = f"https://data.alpaca.markets/v2/stocks/{symbol}/trades/latest"
-    resp = requests.get(url, headers=HEADERS, timeout=10)
+    resp = requests.get(url, headers=_STATIC_HEADERS, timeout=10)
     if not resp.ok:
-        print("Alpaca quote error:", resp.status_code, resp.text)
         return None
-
-    data = resp.json()
     try:
-        return float(data["trade"]["p"])  # price
-    except Exception as e:
-        print("Error parsing quote:", e, data)
+        return Decimal(str(resp.json()["trade"]["p"]))
+    except Exception:
         return None
 
 
-def place_market_order(symbol: str, qty: float, side: str) -> dict | None:
+# ---------------------------------------------------------------------------
+# Trading — requires a per-user Connect access token
+# ---------------------------------------------------------------------------
+
+def place_market_order(symbol: str, qty: float, side: str, access_token: str) -> dict | None:
     """
-    Place a market order via Alpaca with fractional share support.
-    side: "buy" or "sell"
+    Place a market order on behalf of a connected user.
+    Uses their OAuth access token so the order goes into their own Alpaca account.
     """
     url = f"{ALPACA_BASE_URL}/v2/orders"
-    
-    # Always use float for qty to support fractional shares
     body = {
         "symbol": symbol.upper(),
-        "qty": qty,  # Alpaca accepts float for fractional shares
+        "qty": qty,
         "side": side,
         "type": "market",
         "time_in_force": "day",
     }
-    
-    print(f"Placing Alpaca order: {side} {qty} {symbol}")
-    resp = requests.post(url, json=body, headers=HEADERS, timeout=10)
-    
+
+    resp = requests.post(url, json=body, headers=_trading_headers(access_token), timeout=10)
+
     if not resp.ok:
-        error_data = resp.json() if resp.headers.get('content-type') == 'application/json' else {}
-        error_code = error_data.get('code')
-        
-        print("Alpaca order error:", resp.status_code, resp.text)
-        
-        # Handle wash trade detection
+        error_data = resp.json() if "application/json" in resp.headers.get("content-type", "") else {}
+        error_code = error_data.get("code")
+
         if error_code == 40310000:
-            print("Wash trade detected - simulating order for testing")
-            return {
-                "id": f"simulated_{symbol}_{int(qty*1000)}",
-                "status": "filled",
-                "symbol": symbol.upper(),
-                "qty": str(qty),
-                "side": side,
-                "filled_qty": str(qty)
-            }
-        
+            raise ValueError("Order rejected: wash trade detected. Wait before trading the same stock again.")
         return None
 
-    print(f"Alpaca order successful: {resp.json()}")
     return resp.json()
 
 
-def cancel_all_orders() -> bool:
-    """
-    Cancel all open orders to avoid wash trade conflicts.
-    """
+def cancel_all_orders(access_token: str) -> bool:
+    """Cancel all open orders for a connected user."""
     url = f"{ALPACA_BASE_URL}/v2/orders"
-    resp = requests.delete(url, headers=HEADERS, timeout=10)
-    
-    if resp.ok:
-        print("All orders cancelled successfully")
-        return True
-    else:
-        print("Failed to cancel orders:", resp.status_code, resp.text)
-        return False
+    resp = requests.delete(url, headers=_trading_headers(access_token), timeout=10)
+    return resp.ok
+
+
+def get_alpaca_account(access_token: str) -> dict | None:
+    """Fetch the Alpaca account details for a connected user (useful for health checks)."""
+    url = f"{ALPACA_BASE_URL}/v2/account"
+    resp = requests.get(url, headers=_trading_headers(access_token), timeout=10)
+    if not resp.ok:
+        return None
+    return resp.json()

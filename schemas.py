@@ -1,3 +1,4 @@
+# schemas.py - Pydantic schemas for request and response models in Clau Trading Backend.
 from pydantic import BaseModel, Field
 from typing import List, Optional
 

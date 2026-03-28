@@ -1,3 +1,4 @@
+# stripe_service.py - Stripe payment processing for Clau Trading Backend, including payment intent creation, confirmation, and connected account management.
 import stripe
 from config import STRIPE_SECRET_KEY
 
