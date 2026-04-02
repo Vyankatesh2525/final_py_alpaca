@@ -5,6 +5,7 @@ import asyncio
 import requests
 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import RedirectResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -76,6 +77,24 @@ def health_check(db: Session = Depends(get_db)):
 
     status = "ok" if db_status == "ok" else "degraded"
     return {"status": status, "db": db_status}
+
+
+# ---------------------------------------------------------------------------
+# Alpaca OAuth web callback — receives redirect from Alpaca, forwards to app
+# ---------------------------------------------------------------------------
+
+@app.get("/alpaca/callback")
+def alpaca_oauth_callback(code: str = None, error: str = None):
+    """
+    Alpaca redirects the user's browser here after authorization.
+    We forward the code to the Android app via its custom URI scheme.
+    Register https://clau.app/alpaca/callback in the Alpaca dashboard.
+    """
+    if error:
+        return RedirectResponse(url=f"clauapp://alpaca/callback?error={error}")
+    if not code:
+        return RedirectResponse(url="clauapp://alpaca/callback?error=missing_code")
+    return RedirectResponse(url=f"clauapp://alpaca/callback?code={code}")
 
 
 # ---------------------------------------------------------------------------

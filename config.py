@@ -15,7 +15,7 @@ ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets
 ALPACA_CLIENT_ID = os.getenv("ALPACA_CLIENT_ID", "")
 ALPACA_CLIENT_SECRET = os.getenv("ALPACA_CLIENT_SECRET", "")
 # The redirect URI must exactly match what you register in the Alpaca dashboard
-ALPACA_REDIRECT_URI = os.getenv("ALPACA_REDIRECT_URI", "clauapp://alpaca/callback")
+ALPACA_REDIRECT_URI = os.getenv("ALPACA_REDIRECT_URI", "https://clau.app/alpaca/callback")
 # Token exchange endpoint
 ALPACA_TOKEN_URL = "https://api.alpaca.markets/oauth/token"
 
