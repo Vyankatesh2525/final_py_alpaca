@@ -178,9 +178,7 @@ def alpaca_status(
     db: Session = Depends(get_db),
 ):
     record = db.query(AlpacaToken).filter(AlpacaToken.user_id == user_id).first()
-    # Consider connected if the user has an OAuth token OR if static API keys are
-    # configured (paper trading fallback while Alpaca Connect approval is pending).
-    connected = record is not None or bool(ALPACA_API_KEY)
+    connected = record is not None
     return AlpacaConnectStatus(connected=connected)
 
 
@@ -268,12 +266,22 @@ def withdraw_money(request: Request, body: WithdrawRequest, user_id: int = Depen
 
 @app.get("/portfolio", response_model=PortfolioResponse)
 def get_user_portfolio(user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    wallet, positions = get_portfolio(db, user_id)
+    try:
+        account, alpaca_positions = get_portfolio(db, user_id)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     return PortfolioResponse(
-        balance=wallet.balance,
+        balance=float(account.get("cash", 0.0)) if account else 0.0,
+        equity=float(account.get("equity", 0.0)) if account else 0.0,
+        account_number=account.get("account_number", "") if account else "",
+        account_status=account.get("status", "") if account else "",
         positions=[
-            PositionResponse(symbol=p.symbol, quantity=p.quantity, avg_price=p.avg_price)
-            for p in positions
+            PositionResponse(
+                symbol=p["symbol"].split("/")[0] if "/" in p["symbol"] else p["symbol"],
+                quantity=float(p.get("qty", 0)),
+                avg_price=float(p.get("avg_entry_price", 0)),
+            )
+            for p in alpaca_positions
         ],
     )
 
@@ -282,14 +290,16 @@ def get_user_portfolio(user_id: int = Depends(get_current_user_id), db: Session 
 @limiter.limit("20/minute")
 def place_trade(request: Request, body: TradeRequest, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     try:
-        wallet = execute_trade(
+        buying_power = execute_trade(
             db,
             user_id=user_id,
             symbol=body.symbol,
             amount=body.amount,
             side=body.side,
         )
-        return WalletResponse(balance=wallet.balance)
+        return WalletResponse(balance=buying_power)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:

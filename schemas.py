@@ -32,3 +32,6 @@ class PositionResponse(BaseModel):
 class PortfolioResponse(BaseModel):
     balance: float
     positions: List[PositionResponse]
+    account_number: str = ""
+    account_status: str = ""
+    equity: float = 0.0

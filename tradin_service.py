@@ -2,7 +2,7 @@
 from decimal import Decimal
 from sqlalchemy.orm import Session
 from models import Wallet, Position, Trade, AlpacaToken
-from alpaca_client import get_quote, place_market_order, cancel_all_orders
+from alpaca_client import get_quote, place_market_order, cancel_all_orders, get_alpaca_account, get_alpaca_positions
 from crypto_utils import decrypt_token
 
 
@@ -59,24 +59,30 @@ def withdraw(db: Session, user_id: int, amount: float) -> Wallet | None:
 # ---------------------------------------------------------------------------
 
 def get_portfolio(db: Session, user_id: int):
-    wallet = get_or_create_wallet(db, user_id)
-    positions = db.query(Position).filter(Position.user_id == user_id).all()
-    return wallet, positions
+    """Return (alpaca_account_dict, alpaca_positions_list) from the live Alpaca account."""
+    access_token = get_alpaca_token(db, user_id)
+    if not access_token:
+        raise PermissionError("Alpaca account not connected")
+    account = get_alpaca_account(access_token)
+    positions = get_alpaca_positions(access_token)
+    return account, positions
 
 
 # ---------------------------------------------------------------------------
 # Trading
 # ---------------------------------------------------------------------------
 
-def execute_trade(db: Session, user_id: int, symbol: str, amount: float, side: str):
+def execute_trade(db: Session, user_id: int, symbol: str, amount: float, side: str) -> float:
     """
     1. Look up the user's Alpaca Connect access token
     2. Get live price
-    3. Validate wallet balance (buy) or position (sell) — no DB changes yet
-    4. Place order via Alpaca using the user's own token
-    5. Atomically commit wallet + position + trade record in one transaction
+    3. Place order via Alpaca — Alpaca validates balance/position on their end
+    4. Record the trade locally for history
+    5. Return updated buying_power from the Alpaca account
     """
     access_token = get_alpaca_token(db, user_id)
+    if not access_token:
+        raise PermissionError("Alpaca account not connected")
 
     price = get_quote(symbol)
     if price is None:
@@ -85,28 +91,11 @@ def execute_trade(db: Session, user_id: int, symbol: str, amount: float, side: s
     amount = Decimal(str(amount))
     qty = amount / price
     symbol = symbol.upper()
-    wallet = get_or_create_wallet(db, user_id)
 
-    # --- Validate only, no DB changes yet ---
-    if side == "buy":
-        if wallet.balance < amount:
-            raise ValueError("Insufficient wallet balance")
-
-    elif side == "sell":
-        position = db.query(Position).filter(
-            Position.user_id == user_id,
-            Position.symbol == symbol
-        ).first()
-        if not position:
-            raise ValueError("No position found to sell")
-        if position.quantity < qty:
-            raise ValueError(
-                f"Insufficient shares. You have {position.quantity:.8f}, trying to sell {qty:.8f}"
-            )
-    else:
+    if side not in ("buy", "sell"):
         raise ValueError("Invalid side, must be 'buy' or 'sell'")
 
-    # --- Place Alpaca order before touching the DB ---
+    # --- Place Alpaca order — Alpaca handles balance and position validation ---
     alpaca_order = place_market_order(symbol, qty, side, access_token)
     if alpaca_order is None:
         cancel_all_orders(access_token)
@@ -117,36 +106,8 @@ def execute_trade(db: Session, user_id: int, symbol: str, amount: float, side: s
                 "Check if fractional trading is enabled or try again later."
             )
 
-    # --- Atomically apply all DB changes ---
+    # --- Record trade locally for history ---
     try:
-        if side == "buy":
-            wallet.balance -= amount
-            position = db.query(Position).filter(
-                Position.user_id == user_id,
-                Position.symbol == symbol
-            ).first()
-            if not position:
-                position = Position(
-                    user_id=user_id,
-                    symbol=symbol,
-                    quantity=qty,
-                    avg_price=price,
-                )
-                db.add(position)
-            else:
-                total_qty = position.quantity + qty
-                position.avg_price = (position.quantity * position.avg_price + qty * price) / total_qty
-                position.quantity = total_qty
-        else:  # sell
-            wallet.balance += amount
-            position = db.query(Position).filter(
-                Position.user_id == user_id,
-                Position.symbol == symbol
-            ).first()
-            position.quantity -= qty
-            if position.quantity <= 0:
-                db.delete(position)
-
         trade = Trade(
             user_id=user_id,
             symbol=symbol,
@@ -158,15 +119,14 @@ def execute_trade(db: Session, user_id: int, symbol: str, amount: float, side: s
         )
         db.add(trade)
         db.commit()
-        db.refresh(wallet)
     except Exception as e:
         db.rollback()
-        # The Alpaca order was placed but local DB update failed.
-        # Log order_id for manual reconciliation.
         order_id = alpaca_order.get("id", "unknown")
         raise ValueError(
             f"Order {order_id} was placed in Alpaca but failed to record locally: {e}. "
             "Please contact support with this order ID."
         )
 
-    return wallet
+    # Return live buying_power from Alpaca
+    account = get_alpaca_account(access_token)
+    return float(account.get("cash", 0.0)) if account else 0.0

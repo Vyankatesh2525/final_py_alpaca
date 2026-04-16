@@ -16,7 +16,7 @@ pwd_context = CryptContext(
 )
 
 ALGORITHM = "HS256"
-TOKEN_EXPIRE_MINUTES = 60  # 1 hour access token
+TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7-day access token (mobile app)
 REFRESH_TOKEN_EXPIRE_DAYS = 30  # 30-day refresh token
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")

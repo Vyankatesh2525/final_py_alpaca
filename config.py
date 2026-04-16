@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://user:password@localhost:5432/clau_trading_db")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://user:password@localhost:5432/clau_db")
 
 # Alpaca static keys — used only for market data (quotes, bars)
 ALPACA_API_KEY = os.getenv("ALPACA_API_KEY", "")
@@ -41,7 +41,7 @@ if not TOKEN_ENCRYPTION_KEY:
     raise RuntimeError("TOKEN_ENCRYPTION_KEY environment variable is not set")
 
 # Validate required service credentials on startup
-if DATABASE_URL == "postgresql+psycopg2://user:password@localhost:5432/clau_trading_db":
+if DATABASE_URL == "postgresql+psycopg2://user:password@localhost:5432/clau_db":
     raise RuntimeError("DATABASE_URL must be set — default placeholder is not a valid production value")
 
 if not ALPACA_API_KEY:
