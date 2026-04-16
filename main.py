@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from database import Base, engine, get_db
+from routers import userdata, goals, subscription, stripe_banking, kyc
 from schemas import (
     DepositRequest,
     WithdrawRequest,
@@ -24,15 +25,25 @@ from schemas import (
     StripeDepositRequest,
     ConfirmPaymentRequest,
 )
-from auth_schemas import LoginRequest, SignupRequest, LoginResponse, SignupResponse, RefreshTokenRequest, RefreshTokenResponse
+from auth_schemas import (
+    LoginRequest, SignupRequest, LoginResponse, SignupResponse,
+    RefreshTokenRequest, RefreshTokenResponse,
+    ForgotPasswordRequest, ResetPasswordRequest, UserInfoResponse,
+)
 from auth_models import User
-from auth_utils import hash_password, verify_password, create_access_token, create_refresh_token, get_current_user_id, get_user_id_from_refresh_token
+from auth_utils import (
+    hash_password, verify_password,
+    create_access_token, create_refresh_token,
+    get_current_user_id, get_user_id_from_refresh_token,
+    generate_reset_token, hash_token,
+)
+from email_service import send_password_reset_email
 from tradin_service import deposit, withdraw, get_portfolio, execute_trade
 from stripe_service import create_payment_intent, confirm_payment, create_payout_to_user
 from websocket_service import manager, price_updater
 from models import AlpacaToken
 from crypto_utils import encrypt_token
-from config import ALPACA_CLIENT_ID, ALPACA_CLIENT_SECRET, ALPACA_REDIRECT_URI, ALPACA_TOKEN_URL
+from config import ALPACA_CLIENT_ID, ALPACA_CLIENT_SECRET, ALPACA_REDIRECT_URI, ALPACA_TOKEN_URL, ALPACA_API_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +53,12 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 Base.metadata.create_all(bind=engine)
+
+app.include_router(userdata.router)
+app.include_router(goals.router)
+app.include_router(subscription.router)
+app.include_router(stripe_banking.router)
+app.include_router(kyc.router)
 
 _price_updater_task = None
 
@@ -161,7 +178,10 @@ def alpaca_status(
     db: Session = Depends(get_db),
 ):
     record = db.query(AlpacaToken).filter(AlpacaToken.user_id == user_id).first()
-    return AlpacaConnectStatus(connected=record is not None)
+    # Consider connected if the user has an OAuth token OR if static API keys are
+    # configured (paper trading fallback while Alpaca Connect approval is pending).
+    connected = record is not None or bool(ALPACA_API_KEY)
+    return AlpacaConnectStatus(connected=connected)
 
 
 @app.delete("/alpaca/disconnect")
@@ -348,12 +368,28 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.post("/auth/login", response_model=LoginResponse)
 @limiter.limit("5/minute")
 def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == body.username).first()
+    # Accept username or email
+    user = (
+        db.query(User).filter(User.username == body.username).first()
+        or db.query(User).filter(User.email == body.username).first()
+    )
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    access_token = create_access_token({"user_id": user.id})
+
+    access_token  = create_access_token({"user_id": user.id})
     refresh_token = create_refresh_token({"user_id": user.id})
-    return LoginResponse(access_token=access_token, refresh_token=refresh_token, user_id=user.id, message="Login successful")
+
+    # Persist the current JWT so token-based endpoints (userdata, stripe) can look it up.
+    user.token = access_token
+    db.commit()
+
+    return LoginResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user_id=user.id,
+        is_admin=bool(user.is_admin),
+        message="Login successful",
+    )
 
 
 @app.post("/auth/signup", response_model=SignupResponse)
@@ -361,26 +397,106 @@ def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
 def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db)):
     if db.query(User).filter(User.username == body.username).first():
         raise HTTPException(status_code=400, detail="Username already exists")
+    if body.email and db.query(User).filter(User.email == body.email).first():
+        raise HTTPException(status_code=400, detail="Email already exists")
 
-    user = User(username=body.username, email=body.email, password_hash=hash_password(body.password))
+    user = User(
+        username=body.username,
+        full_name=body.full_name,
+        email=body.email,
+        phone_number=body.phone_number,
+        password_hash=hash_password(body.password),
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    # Generate JWT now that we have a real user ID, and store it.
+    jwt_token = create_access_token({"user_id": user.id})
+    user.token = jwt_token
+    db.commit()
 
     from models import Wallet
     if not db.query(Wallet).filter(Wallet.user_id == user.id).first():
         db.add(Wallet(user_id=user.id, balance=0.0))
         db.commit()
 
-    return SignupResponse(message="User created successfully")
+    return SignupResponse(message="User registered successfully", status="success", token=jwt_token)
 
 
 @app.post("/auth/refresh", response_model=RefreshTokenResponse)
 @limiter.limit("10/minute")
-def refresh_token(request: Request, body: RefreshTokenRequest):
+def refresh_token(request: Request, body: RefreshTokenRequest, db: Session = Depends(get_db)):
     user_id = get_user_id_from_refresh_token(body.refresh_token)
     new_access_token = create_access_token({"user_id": user_id})
+
+    # Keep stored token in sync so authenticate-by-token endpoints stay valid.
+    user = db.query(User).filter(User.id == user_id).first()
+    if user:
+        user.token = new_access_token
+        db.commit()
+
     return RefreshTokenResponse(access_token=new_access_token, message="Token refreshed")
+
+
+@app.get("/auth/user/{username}", response_model=UserInfoResponse)
+def get_user_info(username: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return UserInfoResponse(
+        username=user.username,
+        full_name=user.full_name or "",
+        email=user.email or "",
+        phone_number=user.phone_number or "",
+    )
+
+
+@app.post("/auth/forgot-password")
+@limiter.limit("3/minute")
+def forgot_password(request: Request, body: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    # Accept username or email in the `username` field.
+    user = (
+        db.query(User).filter(User.username == body.username).first()
+        or db.query(User).filter(User.email == body.username).first()
+    )
+    if not user:
+        raise HTTPException(status_code=400, detail="No account found with this username or email")
+    if not user.email:
+        raise HTTPException(status_code=400, detail="No email address on file for this account")
+
+    from datetime import datetime, timedelta
+    otp, token_hash = generate_reset_token()
+    user.reset_token        = token_hash
+    user.reset_token_expiry = datetime.utcnow() + timedelta(minutes=15)
+    db.commit()
+
+    sent = send_password_reset_email(user.email, otp)
+    if not sent:
+        logger.error("Failed to send reset email for user_id=%s", user.id)
+        raise HTTPException(status_code=500, detail="Could not send reset email — please try again later")
+
+    return {"message": "Password reset code sent to your email", "status": "success"}
+
+
+@app.post("/auth/reset-password")
+@limiter.limit("5/minute")
+def reset_password(request: Request, body: ResetPasswordRequest, db: Session = Depends(get_db)):
+    from datetime import datetime
+    token_hash = hash_token(body.token)
+    user = db.query(User).filter(User.reset_token == token_hash).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid reset code")
+
+    if not user.reset_token_expiry or user.reset_token_expiry < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Reset code has expired")
+
+    user.password_hash      = hash_password(body.new_password)
+    user.reset_token        = None
+    user.reset_token_expiry = None
+    db.commit()
+
+    return {"message": "Password reset successfully", "status": "success"}
 
 
 @app.get("/")

@@ -22,6 +22,13 @@ ALPACA_TOKEN_URL = "https://api.alpaca.markets/oauth/token"
 # Stripe keys
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 
+# Gmail SMTP — used for password reset OTP emails
+# Reads MAIL_USERNAME / MAIL_PASSWORD to match the existing .env convention.
+SMTP_HOST     = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER     = os.getenv("MAIL_USERNAME", "")
+SMTP_PASSWORD = os.getenv("MAIL_PASSWORD", "")
+
 # JWT
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 if not JWT_SECRET_KEY:

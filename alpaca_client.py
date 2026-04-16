@@ -11,9 +11,16 @@ _STATIC_HEADERS = {
 }
 
 
-def _trading_headers(access_token: str) -> dict:
-    """Build Authorization header for a per-user Connect token."""
-    return {"Authorization": f"Bearer {access_token}"}
+def _trading_headers(access_token: str | None) -> dict:
+    """
+    Build auth headers for Alpaca trading endpoints.
+    If an OAuth Connect token is present, use it (routes the order into the user's own account).
+    Falls back to the static API keys (paper trading developer account) when no user token exists —
+    useful for testing before Alpaca Connect OAuth approval.
+    """
+    if access_token:
+        return {"Authorization": f"Bearer {access_token}"}
+    return _STATIC_HEADERS
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +43,7 @@ def get_quote(symbol: str) -> Decimal | None:
 # Trading — requires a per-user Connect access token
 # ---------------------------------------------------------------------------
 
-def place_market_order(symbol: str, qty: float, side: str, access_token: str) -> dict | None:
+def place_market_order(symbol: str, qty: float, side: str, access_token: str | None) -> dict | None:
     """
     Place a market order on behalf of a connected user.
     Uses their OAuth access token so the order goes into their own Alpaca account.
@@ -63,14 +70,14 @@ def place_market_order(symbol: str, qty: float, side: str, access_token: str) ->
     return resp.json()
 
 
-def cancel_all_orders(access_token: str) -> bool:
+def cancel_all_orders(access_token: str | None) -> bool:
     """Cancel all open orders for a connected user."""
     url = f"{ALPACA_BASE_URL}/v2/orders"
     resp = requests.delete(url, headers=_trading_headers(access_token), timeout=10)
     return resp.ok
 
 
-def get_alpaca_account(access_token: str) -> dict | None:
+def get_alpaca_account(access_token: str | None) -> dict | None:
     """Fetch the Alpaca account details for a connected user (useful for health checks)."""
     url = f"{ALPACA_BASE_URL}/v2/account"
     resp = requests.get(url, headers=_trading_headers(access_token), timeout=10)

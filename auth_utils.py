@@ -1,4 +1,6 @@
 # auth_utils.py - Authentication utilities for Clau Trading Backend, including password hashing and JWT handling.
+import hashlib
+import secrets
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from datetime import datetime, timedelta
@@ -60,3 +62,22 @@ def get_user_id_from_refresh_token(token: str) -> int:
         return user_id
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+
+# ---------------------------------------------------------------------------
+# Password reset helpers
+# ---------------------------------------------------------------------------
+
+def generate_reset_token() -> tuple[str, str]:
+    """
+    Returns (raw_otp, sha256_hash).
+    raw_otp   — 6-digit string sent to the user by email.
+    sha256_hash — what is stored in the database (never store raw OTP).
+    """
+    otp = f"{secrets.randbelow(1_000_000):06d}"
+    return otp, hash_token(otp)
+
+
+def hash_token(token: str) -> str:
+    """SHA-256 hex digest of the given string (used for reset token storage)."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

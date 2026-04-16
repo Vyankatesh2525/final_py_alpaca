@@ -20,14 +20,15 @@ def get_or_create_wallet(db: Session, user_id: int) -> Wallet:
     return wallet
 
 
-def get_alpaca_token(db: Session, user_id: int) -> str:
+def get_alpaca_token(db: Session, user_id: int) -> str | None:
     """
     Retrieve the stored Connect access token for this user.
-    Raises ValueError if the user hasn't linked their Alpaca account yet.
+    Returns None if the user hasn't linked their Alpaca account — alpaca_client
+    will then fall back to the static developer API keys (paper trading account).
     """
     record = db.query(AlpacaToken).filter(AlpacaToken.user_id == user_id).first()
     if not record:
-        raise ValueError("Alpaca account not connected. Please link your Alpaca account first.")
+        return None
     return decrypt_token(record.access_token)
 
 
