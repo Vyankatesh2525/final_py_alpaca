@@ -3,7 +3,7 @@ from sqlalchemy import Column, Integer, String, Numeric, DateTime, Boolean, Fore
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from database import Base
-from auth_models import User
+from auth_models import User  # noqa: F401 — side-effect: registers User with Base.metadata
 
 class Wallet(Base):
     __tablename__ = "wallets"
@@ -58,7 +58,7 @@ class AlpacaToken(Base):
     __tablename__ = "alpaca_tokens"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), unique=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, index=True, nullable=False)
     access_token = Column(String, nullable=False)
     # Alpaca Connect tokens don't expire by default, but store refresh_token
     # and expires_at for future-proofing if Alpaca adds rotation.

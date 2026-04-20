@@ -141,3 +141,50 @@ def get_alpaca_positions(access_token: str | None) -> list:
     if not resp.ok:
         return []
     return resp.json()
+
+
+def get_previous_close(symbol: str) -> Decimal | None:
+    """
+    Return the most-recently-completed trading day's closing price.
+    Fetches the last 2 daily bars; the older one is the previous close.
+    Falls back to the single available bar when only one exists (e.g. new listings).
+    """
+    symbol = symbol.upper()
+
+    if _is_crypto(symbol):
+        base = symbol.replace("USD", "").replace("/", "")
+        crypto_sym = f"{base}/USD"
+        resp = requests.get(
+            "https://data.alpaca.markets/v1beta3/crypto/us/bars",
+            headers=_STATIC_HEADERS,
+            params={"symbols": crypto_sym, "timeframe": "1Day", "limit": 2},
+            timeout=10,
+        )
+        if resp.ok:
+            try:
+                bars = resp.json()["bars"].get(crypto_sym, [])
+                if bars:
+                    # bars[0] is the older day; bars[1] (if present) is the most recent close
+                    return Decimal(str(bars[0]["c"]))
+            except Exception:
+                pass
+        logger.warning("Crypto previous close failed for %s", crypto_sym)
+        return None
+
+    # Stock
+    resp = requests.get(
+        f"https://data.alpaca.markets/v2/stocks/{symbol}/bars",
+        headers=_STATIC_HEADERS,
+        params={"timeframe": "1Day", "limit": 2},
+        timeout=10,
+    )
+    if not resp.ok:
+        logger.warning("Stock previous close failed for %s: %s", symbol, resp.status_code)
+        return None
+    try:
+        bars = resp.json().get("bars", [])
+        if bars:
+            return Decimal(str(bars[0]["c"]))
+    except Exception:
+        pass
+    return None

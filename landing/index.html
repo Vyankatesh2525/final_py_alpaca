@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Clau — Your money, finally making moves.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --purple:      #A855F7;
+      --purple-dark: #7C3AED;
+      --cyan:        #00D4AA;
+      --navy:        #0A0E1A;
+      --navy-mid:    #0E1628;
+      --navy-light:  #160E2A;
+      --glass:       rgba(255,255,255,0.05);
+      --glass-border:rgba(255,255,255,0.10);
+      --text:        #F0F0F8;
+      --muted:       #8A8AA8;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Poppins', sans-serif;
+      background: var(--navy);
+      color: var(--text);
+      overflow-x: hidden;
+    }
+
+    /* ── Canvas starfield ── */
+    #stars {
+      position: fixed; inset: 0;
+      z-index: 0; pointer-events: none;
+    }
+
+    /* ── Navbar ── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0;
+      z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1.2rem 2.5rem;
+      backdrop-filter: blur(18px);
+      background: rgba(10,14,26,0.6);
+      border-bottom: 1px solid var(--glass-border);
+    }
+    .nav-logo {
+      font-size: 1.6rem; font-weight: 800; letter-spacing: -0.5px;
+      background: linear-gradient(135deg, var(--purple), var(--cyan));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .nav-links { display: flex; gap: 2rem; list-style: none; }
+    .nav-links a {
+      color: var(--muted); text-decoration: none; font-size: 0.9rem; font-weight: 500;
+      transition: color 0.3s;
+    }
+    .nav-links a:hover { color: var(--text); }
+    .nav-cta {
+      background: linear-gradient(135deg, var(--purple), var(--purple-dark));
+      color: #fff; border: none; padding: 0.6rem 1.4rem;
+      border-radius: 50px; font-family: 'Poppins', sans-serif;
+      font-size: 0.85rem; font-weight: 600; cursor: pointer;
+      transition: opacity 0.2s, transform 0.2s;
+    }
+    .nav-cta:hover { opacity: 0.85; transform: translateY(-1px); }
+
+    /* ── Sections wrapper ── */
+    section { position: relative; z-index: 1; }
+
+    /* ── Hero ── */
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      text-align: center;
+      padding: 7rem 2rem 4rem;
+      background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(168,85,247,0.18) 0%, transparent 70%),
+                  linear-gradient(150deg, var(--navy) 0%, var(--navy-mid) 50%, var(--navy-light) 100%);
+    }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      background: var(--glass); border: 1px solid var(--glass-border);
+      border-radius: 50px; padding: 0.4rem 1rem;
+      font-size: 0.78rem; font-weight: 500; color: var(--cyan);
+      margin-bottom: 1.8rem;
+      animation: fadeDown 0.8s ease both;
+    }
+    .hero-badge .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--cyan);
+      animation: pulse 2s infinite;
+    }
+    .hero h1 {
+      font-size: clamp(2.8rem, 7vw, 5.2rem);
+      font-weight: 800; line-height: 1.1; letter-spacing: -1.5px;
+      margin-bottom: 1.2rem;
+      animation: fadeUp 0.9s ease 0.1s both;
+    }
+    .hero h1 span {
+      background: linear-gradient(135deg, var(--purple) 0%, var(--cyan) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .hero p {
+      max-width: 560px; font-size: 1.1rem; line-height: 1.7;
+      color: var(--muted); margin-bottom: 2.5rem;
+      animation: fadeUp 0.9s ease 0.2s both;
+    }
+    .hero-buttons {
+      display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center;
+      margin-bottom: 4rem;
+      animation: fadeUp 0.9s ease 0.3s both;
+    }
+    .btn-primary {
+      display: flex; align-items: center; gap: 0.6rem;
+      background: linear-gradient(135deg, var(--purple), var(--purple-dark));
+      color: #fff; text-decoration: none; padding: 0.85rem 2rem;
+      border-radius: 50px; font-weight: 600; font-size: 0.95rem;
+      box-shadow: 0 8px 30px rgba(168,85,247,0.35);
+      transition: transform 0.25s, box-shadow 0.25s;
+    }
+    .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 14px 40px rgba(168,85,247,0.45); }
+    .btn-secondary {
+      display: flex; align-items: center; gap: 0.6rem;
+      background: var(--glass); border: 1px solid var(--glass-border);
+      color: var(--text); text-decoration: none; padding: 0.85rem 2rem;
+      border-radius: 50px; font-weight: 600; font-size: 0.95rem;
+      backdrop-filter: blur(10px);
+      transition: transform 0.25s, background 0.25s;
+    }
+    .btn-secondary:hover { transform: translateY(-3px); background: rgba(255,255,255,0.09); }
+
+    /* Phone mockup */
+    .phone-wrap {
+      position: relative; display: inline-block;
+      animation: float 4s ease-in-out infinite, fadeUp 1s ease 0.4s both;
+    }
+    .phone {
+      width: 240px; height: 490px;
+      background: linear-gradient(145deg, #1a1a2e, #16213e);
+      border-radius: 40px;
+      border: 2px solid rgba(168,85,247,0.4);
+      box-shadow: 0 30px 80px rgba(0,0,0,0.5), 0 0 60px rgba(168,85,247,0.15),
+                  inset 0 1px 0 rgba(255,255,255,0.08);
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 1.2rem; padding: 2rem 1.5rem;
+      overflow: hidden;
+    }
+    .phone-notch {
+      width: 80px; height: 6px; background: rgba(255,255,255,0.15);
+      border-radius: 3px; align-self: center; margin-top: -0.5rem;
+    }
+    .phone-stat {
+      width: 100%; background: rgba(168,85,247,0.12);
+      border: 1px solid rgba(168,85,247,0.2);
+      border-radius: 14px; padding: 0.9rem 1rem;
+    }
+    .phone-stat-label { font-size: 0.6rem; color: var(--muted); font-weight: 500; }
+    .phone-stat-value { font-size: 1.4rem; font-weight: 700; color: var(--text); }
+    .phone-stat-delta { font-size: 0.65rem; color: var(--cyan); font-weight: 600; }
+    .phone-chart {
+      width: 100%; height: 60px;
+      background: rgba(0,212,170,0.06);
+      border: 1px solid rgba(0,212,170,0.15);
+      border-radius: 14px; overflow: hidden; position: relative;
+    }
+    .phone-chart svg { width: 100%; height: 100%; }
+    .phone-actions {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; width: 100%;
+    }
+    .phone-action-btn {
+      background: rgba(168,85,247,0.15); border: 1px solid rgba(168,85,247,0.25);
+      border-radius: 10px; padding: 0.55rem; text-align: center;
+      font-size: 0.6rem; color: var(--purple); font-weight: 600;
+    }
+    .phone-glow {
+      position: absolute; width: 200px; height: 200px;
+      background: radial-gradient(circle, rgba(168,85,247,0.3) 0%, transparent 70%);
+      border-radius: 50%; left: 50%; top: 30%; transform: translate(-50%, -50%);
+      filter: blur(30px); pointer-events: none;
+    }
+
+    /* ── Stats bar ── */
+    .stats-bar {
+      padding: 3rem 2rem;
+      background: var(--glass);
+      border-top: 1px solid var(--glass-border);
+      border-bottom: 1px solid var(--glass-border);
+    }
+    .stats-inner {
+      max-width: 900px; margin: 0 auto;
+      display: flex; justify-content: space-around; flex-wrap: wrap; gap: 2rem;
+      text-align: center;
+    }
+    .stat-item { animation: fadeUp 0.8s ease both; }
+    .stat-item:nth-child(2) { animation-delay: 0.1s; }
+    .stat-item:nth-child(3) { animation-delay: 0.2s; }
+    .stat-item:nth-child(4) { animation-delay: 0.3s; }
+    .stat-number {
+      font-size: 2.2rem; font-weight: 800; letter-spacing: -1px;
+      background: linear-gradient(135deg, var(--purple), var(--cyan));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .stat-label { font-size: 0.8rem; color: var(--muted); font-weight: 500; margin-top: 0.2rem; }
+
+    /* ── Features ── */
+    .features {
+      padding: 7rem 2rem;
+      background: linear-gradient(180deg, var(--navy) 0%, var(--navy-mid) 100%);
+    }
+    .section-tag {
+      text-align: center; font-size: 0.78rem; font-weight: 600;
+      color: var(--purple); letter-spacing: 2px; text-transform: uppercase;
+      margin-bottom: 0.8rem;
+    }
+    .section-title {
+      text-align: center; font-size: clamp(1.9rem, 4vw, 2.8rem);
+      font-weight: 800; line-height: 1.2; letter-spacing: -0.5px;
+      margin-bottom: 1rem;
+    }
+    .section-sub {
+      text-align: center; color: var(--muted); font-size: 1rem;
+      max-width: 520px; margin: 0 auto 4rem; line-height: 1.7;
+    }
+    .features-grid {
+      max-width: 1100px; margin: 0 auto;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.5rem;
+    }
+    .feature-card {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: 20px; padding: 2rem;
+      backdrop-filter: blur(12px);
+      transition: transform 0.3s, border-color 0.3s, box-shadow 0.3s;
+      cursor: default;
+    }
+    .feature-card:hover {
+      transform: translateY(-6px);
+      border-color: rgba(168,85,247,0.35);
+      box-shadow: 0 20px 50px rgba(168,85,247,0.12);
+    }
+    .feature-icon {
+      width: 52px; height: 52px; border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.4rem; margin-bottom: 1.2rem;
+    }
+    .icon-purple { background: rgba(168,85,247,0.15); }
+    .icon-cyan   { background: rgba(0,212,170,0.12); }
+    .icon-pink   { background: rgba(208,92,227,0.12); }
+    .icon-blue   { background: rgba(130,177,255,0.12); }
+    .icon-gold   { background: rgba(255,215,0,0.10); }
+    .icon-green  { background: rgba(80,200,120,0.12); }
+    .feature-card h3 { font-size: 1.1rem; font-weight: 700; margin-bottom: 0.6rem; }
+    .feature-card p  { font-size: 0.88rem; color: var(--muted); line-height: 1.65; }
+
+    /* ── How it works ── */
+    .how {
+      padding: 7rem 2rem;
+      background: radial-gradient(ellipse 70% 50% at 50% 100%, rgba(0,212,170,0.08) 0%, transparent 70%),
+                  linear-gradient(180deg, var(--navy-mid) 0%, var(--navy) 100%);
+    }
+    .steps {
+      max-width: 800px; margin: 0 auto;
+      display: flex; flex-direction: column; gap: 0;
+    }
+    .step {
+      display: flex; gap: 2rem; align-items: flex-start;
+      padding: 2rem 0; position: relative;
+    }
+    .step:not(:last-child)::after {
+      content: '';
+      position: absolute; left: 24px; top: 70px;
+      width: 2px; bottom: 0;
+      background: linear-gradient(180deg, rgba(168,85,247,0.4), transparent);
+    }
+    .step-number {
+      flex-shrink: 0; width: 48px; height: 48px;
+      border-radius: 50%; border: 2px solid var(--purple);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1rem; font-weight: 700; color: var(--purple);
+      background: rgba(168,85,247,0.08);
+      position: relative; z-index: 1;
+    }
+    .step-content h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.4rem; }
+    .step-content p  { font-size: 0.88rem; color: var(--muted); line-height: 1.65; }
+
+    /* ── Download CTA ── */
+    .download {
+      padding: 7rem 2rem;
+      text-align: center;
+      background: linear-gradient(135deg, rgba(168,85,247,0.12), rgba(0,212,170,0.06));
+      border-top: 1px solid var(--glass-border);
+    }
+    .download h2 {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 800; line-height: 1.15; letter-spacing: -0.5px;
+      margin-bottom: 1rem;
+    }
+    .download h2 span {
+      background: linear-gradient(135deg, var(--purple), var(--cyan));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .download p { color: var(--muted); font-size: 1rem; margin-bottom: 2.5rem; line-height: 1.7; }
+    .store-buttons {
+      display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;
+    }
+    .store-btn {
+      display: flex; align-items: center; gap: 0.9rem;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 14px; padding: 0.9rem 1.6rem; text-decoration: none; color: var(--text);
+      backdrop-filter: blur(10px);
+      transition: transform 0.25s, background 0.25s, border-color 0.25s;
+    }
+    .store-btn:hover {
+      transform: translateY(-3px); background: rgba(255,255,255,0.09);
+      border-color: rgba(168,85,247,0.4);
+    }
+    .store-btn-icon { font-size: 1.8rem; }
+    .store-btn-text { text-align: left; }
+    .store-btn-text small { font-size: 0.68rem; color: var(--muted); display: block; }
+    .store-btn-text strong { font-size: 1rem; font-weight: 700; }
+    .coming-soon-badge {
+      display: inline-block; background: rgba(168,85,247,0.15);
+      border: 1px solid rgba(168,85,247,0.3); border-radius: 50px;
+      padding: 0.3rem 1rem; font-size: 0.72rem; color: var(--purple);
+      font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+      margin-bottom: 1.5rem;
+    }
+
+    /* ── Footer ── */
+    footer {
+      padding: 2.5rem 2rem;
+      border-top: 1px solid var(--glass-border);
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 1rem;
+      background: var(--navy);
+    }
+    .footer-logo {
+      font-size: 1.2rem; font-weight: 800;
+      background: linear-gradient(135deg, var(--purple), var(--cyan));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    footer p { font-size: 0.8rem; color: var(--muted); }
+    .footer-links { display: flex; gap: 1.5rem; }
+    .footer-links a { font-size: 0.8rem; color: var(--muted); text-decoration: none; transition: color 0.2s; }
+    .footer-links a:hover { color: var(--text); }
+
+    /* ── Animations ── */
+    @keyframes fadeUp   { from { opacity:0; transform:translateY(24px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes fadeDown { from { opacity:0; transform:translateY(-16px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes float    { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-14px); } }
+    @keyframes pulse    { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:0.5; transform:scale(0.75); } }
+    @keyframes gradShift {
+      0%   { background-position: 0% 50%; }
+      50%  { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    .animate-on-scroll { opacity:0; transform:translateY(30px); transition: opacity 0.7s ease, transform 0.7s ease; }
+    .animate-on-scroll.visible { opacity:1; transform:translateY(0); }
+
+    /* ── Mobile ── */
+    @media (max-width: 640px) {
+      nav { padding: 1rem 1.2rem; }
+      .nav-links { display: none; }
+      .hero { padding: 6rem 1.2rem 3rem; }
+      .phone { width: 200px; height: 410px; }
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="stars"></canvas>
+
+<!-- Navbar -->
+<nav>
+  <div class="nav-logo">clau</div>
+  <ul class="nav-links">
+    <li><a href="#features">Features</a></li>
+    <li><a href="#how">How it works</a></li>
+    <li><a href="#download">Get the app</a></li>
+  </ul>
+  <button class="nav-cta" onclick="document.getElementById('download').scrollIntoView({behavior:'smooth'})">
+    Get early access
+  </button>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="hero-badge">
+    <span class="dot"></span>
+    Now in early access
+  </div>
+  <h1>Your money,<br /><span>finally making moves.</span></h1>
+  <p>Clau connects your bank, your investments, and your goals into one beautifully simple experience — powered by AI.</p>
+  <div class="hero-buttons">
+    <a href="#download" class="btn-primary">
+      <span>📲</span> Get the app
+    </a>
+    <a href="#features" class="btn-secondary">
+      <span>✦</span> See what's inside
+    </a>
+  </div>
+
+  <!-- Phone mockup -->
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="phone-notch"></div>
+      <div class="phone-glow"></div>
+      <div class="phone-stat">
+        <div class="phone-stat-label">PORTFOLIO VALUE</div>
+        <div class="phone-stat-value">$24,817.42</div>
+        <div class="phone-stat-delta">↑ +3.2% this week</div>
+      </div>
+      <div class="phone-chart">
+        <svg viewBox="0 0 200 60" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="cg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#00D4AA" stop-opacity="0.4"/>
+              <stop offset="100%" stop-color="#00D4AA" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <path d="M0,45 C20,40 40,50 60,35 C80,20 100,30 120,20 C140,10 160,25 180,15 L200,10 L200,60 L0,60 Z" fill="url(#cg)"/>
+          <path d="M0,45 C20,40 40,50 60,35 C80,20 100,30 120,20 C140,10 160,25 180,15 L200,10" fill="none" stroke="#00D4AA" stroke-width="2"/>
+        </svg>
+      </div>
+      <div class="phone-stat" style="background:rgba(0,212,170,0.08);border-color:rgba(0,212,170,0.2);">
+        <div class="phone-stat-label">CASH BALANCE</div>
+        <div class="phone-stat-value" style="font-size:1.1rem;">$3,240.00</div>
+        <div class="phone-stat-delta">Linked via bank</div>
+      </div>
+      <div class="phone-actions">
+        <div class="phone-action-btn">📈 Trade</div>
+        <div class="phone-action-btn">💬 Ask AI</div>
+        <div class="phone-action-btn">🏦 Deposit</div>
+        <div class="phone-action-btn">📊 Analyze</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Stats bar -->
+<section class="stats-bar">
+  <div class="stats-inner">
+    <div class="stat-item animate-on-scroll">
+      <div class="stat-number">10K+</div>
+      <div class="stat-label">Early sign-ups</div>
+    </div>
+    <div class="stat-item animate-on-scroll">
+      <div class="stat-number">$2M+</div>
+      <div class="stat-label">Assets tracked</div>
+    </div>
+    <div class="stat-item animate-on-scroll">
+      <div class="stat-number">50+</div>
+      <div class="stat-label">Supported assets</div>
+    </div>
+    <div class="stat-item animate-on-scroll">
+      <div class="stat-number">4.9★</div>
+      <div class="stat-label">Beta rating</div>
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section class="features" id="features">
+  <p class="section-tag animate-on-scroll">Everything you need</p>
+  <h2 class="section-title animate-on-scroll">Built for the way<br />you actually live</h2>
+  <p class="section-sub animate-on-scroll">No jargon. No complexity. Just powerful tools that understand your financial life and help you grow it.</p>
+
+  <div class="features-grid">
+    <div class="feature-card animate-on-scroll">
+      <div class="feature-icon icon-purple">📈</div>
+      <h3>Smart Trading</h3>
+      <p>Buy and sell stocks and crypto in seconds. Clau surfaces the right insights at the right time — so you trade with confidence, not guesswork.</p>
+    </div>
+    <div class="feature-card animate-on-scroll">
+      <div class="feature-icon icon-cyan">🏦</div>
+      <h3>Bank Linking</h3>
+      <p>Securely connect your bank accounts with bank-level encryption. See your real balances and transactions alongside your portfolio — all in one place.</p>
+    </div>
+    <div class="feature-card animate-on-scroll">
+      <div class="feature-icon icon-pink">💬</div>
+      <h3>AI Financial Assistant</h3>
+      <p>Ask Clau anything. "How am I doing this month?" "Is this a good time to buy?" Get personalized answers grounded in your actual financial data.</p>
+    </div>
+    <div class="feature-card animate-on-scroll">
+      <div class="feature-icon icon-blue">📊</div>
+      <h3>Spending Breakdown</h3>
+      <p>Understand where your money actually goes. Beautiful category charts that update automatically every time you spend.</p>
+    </div>
+    <div class="feature-card animate-on-scroll">
+      <div class="feature-icon icon-gold">🎯</div>
+      <h3>Goal Tracking</h3>
+      <p>Set financial goals — a vacation, a car, an emergency fund — and watch Clau map a path to get you there based on your income and habits.</p>
+    </div>
+    <div class="feature-card animate-on-scroll">
+      <div class="feature-icon icon-green">🛡️</div>
+      <h3>Built-in Security</h3>
+      <p>KYC verification, encrypted tokens, and fraud protection built in from day one. Your data never leaves your control.</p>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section class="how" id="how">
+  <p class="section-tag animate-on-scroll">Simple by design</p>
+  <h2 class="section-title animate-on-scroll">Up and running<br />in under 3 minutes</h2>
+  <p class="section-sub animate-on-scroll">No broker account to open. No forms to fill out. Just download, connect, and go.</p>
+
+  <div class="steps">
+    <div class="step animate-on-scroll">
+      <div class="step-number">1</div>
+      <div class="step-content">
+        <h3>Create your account</h3>
+        <p>Sign up in seconds with your email. Clau verifies your identity quickly and securely — no paperwork, no waiting.</p>
+      </div>
+    </div>
+    <div class="step animate-on-scroll">
+      <div class="step-number">2</div>
+      <div class="step-content">
+        <h3>Connect your bank</h3>
+        <p>Link your bank accounts with a few taps using secure, bank-grade connections. Your credentials never touch our servers.</p>
+      </div>
+    </div>
+    <div class="step animate-on-scroll">
+      <div class="step-number">3</div>
+      <div class="step-content">
+        <h3>Link your brokerage</h3>
+        <p>Connect your Alpaca account to start trading. Already have positions? Clau imports everything automatically.</p>
+      </div>
+    </div>
+    <div class="step animate-on-scroll">
+      <div class="step-number">4</div>
+      <div class="step-content">
+        <h3>Let Clau do the heavy lifting</h3>
+        <p>Your dashboard comes alive — live prices, spending insights, portfolio performance, and an AI that learns what matters to you.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Download CTA -->
+<section class="download" id="download">
+  <div class="coming-soon-badge">Coming soon</div>
+  <h2>Ready to take<br /><span>control of your money?</span></h2>
+  <p>Join thousands on the waitlist. Be first to know when Clau launches on iOS and Android.</p>
+  <div class="store-buttons">
+    <a href="#" class="store-btn">
+      <span class="store-btn-icon">🍎</span>
+      <div class="store-btn-text">
+        <small>Download on the</small>
+        <strong>App Store</strong>
+      </div>
+    </a>
+    <a href="#" class="store-btn">
+      <span class="store-btn-icon">▶️</span>
+      <div class="store-btn-text">
+        <small>Get it on</small>
+        <strong>Google Play</strong>
+      </div>
+    </a>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="footer-logo">clau</div>
+  <p>© 2026 Clau. All rights reserved.</p>
+  <div class="footer-links">
+    <a href="#">Privacy</a>
+    <a href="#">Terms</a>
+    <a href="#">Contact</a>
+  </div>
+</footer>
+
+<script>
+  /* ── Starfield ── */
+  const canvas = document.getElementById('stars');
+  const ctx = canvas.getContext('2d');
+  let stars = [];
+
+  function resize() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+
+  function initStars() {
+    stars = Array.from({ length: 120 }, () => ({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      r: Math.random() * 1.2 + 0.2,
+      o: Math.random() * 0.6 + 0.1,
+      speed: Math.random() * 0.3 + 0.05,
+    }));
+  }
+
+  function drawStars() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    stars.forEach(s => {
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,255,255,${s.o})`;
+      ctx.fill();
+      s.o += Math.sin(Date.now() * s.speed * 0.001) * 0.003;
+    });
+    requestAnimationFrame(drawStars);
+  }
+
+  resize(); initStars(); drawStars();
+  window.addEventListener('resize', () => { resize(); initStars(); });
+
+  /* ── Scroll animations ── */
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach((e, i) => {
+      if (e.isIntersecting) {
+        setTimeout(() => e.target.classList.add('visible'), i * 80);
+        observer.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.12 });
+
+  document.querySelectorAll('.animate-on-scroll').forEach(el => observer.observe(el));
+</script>
+</body>
+</html>

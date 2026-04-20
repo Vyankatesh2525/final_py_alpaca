@@ -3,7 +3,9 @@ import logging
 import json
 import asyncio
 import requests
+from decimal import Decimal
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import RedirectResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -13,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
-from database import Base, engine, get_db
+from database import get_db
 from routers import userdata, goals, subscription, stripe_banking, kyc
 from schemas import (
     DepositRequest,
@@ -43,41 +45,47 @@ from stripe_service import create_payment_intent, confirm_payment, create_payout
 from websocket_service import manager, price_updater
 from models import AlpacaToken
 from crypto_utils import encrypt_token
-from config import ALPACA_CLIENT_ID, ALPACA_CLIENT_SECRET, ALPACA_REDIRECT_URI, ALPACA_TOKEN_URL, ALPACA_API_KEY
+from config import (
+    ALPACA_CLIENT_ID, ALPACA_CLIENT_SECRET, ALPACA_REDIRECT_URI,
+    ALPACA_TOKEN_URL, ALPACA_API_KEY, IS_PRODUCTION,
+)
 
+logging.basicConfig(
+    level=logging.WARNING if IS_PRODUCTION else logging.DEBUG,
+    format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+)
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(price_updater())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    logger.info("Server shutdown complete")
+
+
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(title="Clau Trading Backend", docs_url=None, redoc_url=None)  # disable docs in prod
+app = FastAPI(
+    title="Clau Trading Backend",
+    # Disable interactive docs in production — no need to expose the schema publicly.
+    # In development, /docs and /redoc are available for testing.
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    lifespan=lifespan,
+)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-Base.metadata.create_all(bind=engine)
 
 app.include_router(userdata.router)
 app.include_router(goals.router)
 app.include_router(subscription.router)
 app.include_router(stripe_banking.router)
 app.include_router(kyc.router)
-
-_price_updater_task = None
-
-
-@app.on_event("startup")
-async def startup_event():
-    global _price_updater_task
-    _price_updater_task = asyncio.create_task(price_updater())
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    if _price_updater_task:
-        _price_updater_task.cancel()
-        try:
-            await _price_updater_task
-        except asyncio.CancelledError:
-            pass
-    logger.info("Server shutdown complete")
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +241,12 @@ def confirm_stripe_payment(
 def withdraw_money(request: Request, body: WithdrawRequest, user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     from models import Wallet
 
-    wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
-    if not wallet or wallet.balance < body.amount:
+    dec_amount = Decimal(str(body.amount))
+
+    # SELECT FOR UPDATE locks this row so concurrent requests can't both pass
+    # the balance check before either has committed the deduction.
+    wallet = db.query(Wallet).filter(Wallet.user_id == user_id).with_for_update().first()
+    if not wallet or wallet.balance < dec_amount:
         raise HTTPException(status_code=400, detail="Insufficient balance")
 
     if not wallet.stripe_account_id:
@@ -243,19 +255,33 @@ def withdraw_money(request: Request, body: WithdrawRequest, user_id: int = Depen
             detail="No payout account linked. Please connect a bank account before withdrawing."
         )
 
+    # Deduct first and commit — the lock is released here. If the Stripe call
+    # subsequently fails we refund immediately. This prevents a race where two
+    # concurrent requests both pass the balance check before either deducts.
+    wallet.balance -= dec_amount
+    db.commit()
+    db.refresh(wallet)
+
     try:
         payout_result = create_payout_to_user(wallet.stripe_account_id, body.amount)
 
         if payout_result.get("status") in ["paid", "pending"]:
-            wallet.balance -= body.amount
-            db.commit()
-            return WalletResponse(balance=wallet.balance)
+            return WalletResponse(balance=float(wallet.balance))
 
+        # Stripe accepted the request but returned an unexpected status — refund.
+        wallet.balance += dec_amount
+        db.commit()
         raise HTTPException(status_code=400, detail="Payout could not be completed")
 
     except HTTPException:
         raise
     except Exception:
+        # Stripe call threw — refund the deducted amount so the user isn't shorted.
+        try:
+            wallet.balance += dec_amount
+            db.commit()
+        except Exception:
+            logger.exception("CRITICAL: refund failed for user_id=%s amount=%s", user_id, dec_amount)
         logger.exception("Unexpected error during withdrawal for user_id=%s", user_id)
         raise HTTPException(status_code=500, detail="Withdrawal failed. Please try again later.")
 
@@ -324,21 +350,30 @@ def get_current_price(request: Request, symbol: str):
 @app.get("/prices/{symbol}/daily")
 @limiter.limit("60/minute")
 def get_daily_price_data(request: Request, symbol: str):
-    from alpaca_client import get_quote
-    import random
+    from alpaca_client import get_quote, get_previous_close
     current_price = get_quote(symbol)
-    if current_price:
-        previous_close = current_price * (0.95 + random.random() * 0.1)
-        daily_change = current_price - previous_close
-        daily_change_percent = (daily_change / previous_close) * 100
+    if not current_price:
+        raise HTTPException(status_code=404, detail="Price not found")
+
+    previous_close = get_previous_close(symbol)
+    if previous_close is None:
         return {
             "symbol": symbol.upper(),
-            "current_price": current_price,
-            "previous_close": previous_close,
-            "daily_change": daily_change,
-            "daily_change_percent": daily_change_percent,
+            "current_price": float(current_price),
+            "previous_close": None,
+            "daily_change": None,
+            "daily_change_percent": None,
         }
-    raise HTTPException(status_code=404, detail="Price not found")
+
+    daily_change = float(current_price - previous_close)
+    daily_change_percent = float((current_price - previous_close) / previous_close * 100)
+    return {
+        "symbol": symbol.upper(),
+        "current_price": float(current_price),
+        "previous_close": float(previous_close),
+        "daily_change": round(daily_change, 4),
+        "daily_change_percent": round(daily_change_percent, 4),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -427,8 +462,9 @@ def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db))
     db.commit()
 
     from models import Wallet
+    from decimal import Decimal
     if not db.query(Wallet).filter(Wallet.user_id == user.id).first():
-        db.add(Wallet(user_id=user.id, balance=0.0))
+        db.add(Wallet(user_id=user.id, balance=Decimal(0)))
         db.commit()
 
     return SignupResponse(message="User registered successfully", status="success", token=jwt_token)

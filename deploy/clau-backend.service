@@ -1,0 +1,54 @@
+# /etc/systemd/system/clau-backend.service
+#
+# SETUP:
+#   1. Copy this file to /etc/systemd/system/clau-backend.service
+#   2. Create /etc/clau/env.conf  (chmod 600, chown root:root) with the vars below
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable clau-backend
+#   5. sudo systemctl start clau-backend
+#
+# REQUIRED /etc/clau/env.conf contents (fill in real values):
+#
+#   DATABASE_URL=postgresql+psycopg2://clau_app:<password>@<rds-endpoint>:5432/clau_db
+#   JWT_SECRET_KEY=<64-char random hex>
+#   TOKEN_ENCRYPTION_KEY=<Fernet key — python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())">
+#   ALPACA_API_KEY=<your key>
+#   ALPACA_SECRET_KEY=<your secret>
+#   ALPACA_CLIENT_ID=<your OAuth client id>
+#   ALPACA_CLIENT_SECRET=<your OAuth client secret>
+#   ALPACA_REDIRECT_URI=https://your-domain.com/alpaca/callback
+#   STRIPE_SECRET_KEY=sk_live_...
+#   MAIL_USERNAME=<gmail address>
+#   MAIL_PASSWORD=<gmail app password>
+
+[Unit]
+Description=Clau Trading Backend (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/clau/final_py_alpaca
+EnvironmentFile=/etc/clau/env.conf
+
+Environment=APP_ENV=production
+ExecStart=/home/ubuntu/clau/final_py_alpaca/venv/bin/uvicorn main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 2 \
+    --log-level info
+
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=clau-backend
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/ubuntu/clau
+
+[Install]
+WantedBy=multi-user.target

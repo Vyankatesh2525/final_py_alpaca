@@ -1,7 +1,7 @@
 # auth_models.py - SQLAlchemy models for user authentication in Clau Trading Backend.
 from sqlalchemy import (
     BigInteger, Boolean, Column, Date, DateTime, ForeignKey,
-    Integer, String, Text,
+    Index, Integer, String, Text, text,
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -42,6 +42,12 @@ class User(Base):
     goals           = relationship("UserGoal",        back_populates="user", cascade="all, delete-orphan")
     kyc_submissions = relationship("KYCSubmission",   back_populates="user", cascade="all, delete-orphan")
 
+    __table_args__ = (
+        # Partial unique index: only enforces uniqueness when email is NOT NULL,
+        # allowing multiple rows with email=NULL (users who didn't provide one).
+        Index("uq_users_email_notnull", "email", unique=True, postgresql_where=text("email IS NOT NULL")),
+    )
+
 
 class UserGoal(Base):
     __tablename__ = "user_goals"
@@ -53,6 +59,10 @@ class UserGoal(Base):
     sub_tasks  = Column(Text, nullable=False, default="[]")
 
     user = relationship("User", back_populates="goals")
+
+    __table_args__ = (
+        Index("idx_user_goals_user_id", "user_id"),
+    )
 
 
 class KYCSubmission(Base):
@@ -68,10 +78,15 @@ class KYCSubmission(Base):
     phone            = Column(String(20), nullable=False)
     front_doc_url    = Column(Text)
     back_doc_url     = Column(Text)
-    status           = Column(String(20), nullable=False, default="pending")
+    status           = Column(String(20), nullable=False, default="pending", index=True)
     rejection_reason = Column(Text)
     submitted_at     = Column(DateTime, nullable=False, default=datetime.utcnow)
     reviewed_at      = Column(DateTime)
     reviewed_by      = Column(String(100))
 
     user = relationship("User", back_populates="kyc_submissions")
+
+    __table_args__ = (
+        Index("idx_kyc_user_id", "user_id"),
+        Index("idx_kyc_status", "status"),
+    )

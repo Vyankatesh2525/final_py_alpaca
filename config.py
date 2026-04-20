@@ -4,6 +4,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# "development" (default) or "production"
+# Set APP_ENV=production in your systemd EnvironmentFile on EC2.
+APP_ENV = os.getenv("APP_ENV", "development")
+IS_PRODUCTION = APP_ENV == "production"
+
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://user:password@localhost:5432/clau_db")
 
 # Alpaca static keys — used only for market data (quotes, bars)
@@ -20,7 +25,10 @@ ALPACA_REDIRECT_URI = os.getenv("ALPACA_REDIRECT_URI", "https://clau.app/alpaca/
 ALPACA_TOKEN_URL = "https://api.alpaca.markets/oauth/token"
 
 # Stripe keys
-STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_SECRET_KEY      = os.getenv("STRIPE_SECRET_KEY", "")
+# Webhook signing secret from the Stripe dashboard → Developers → Webhooks.
+# Run: stripe listen --forward-to localhost:8000/api/stripe/webhook  (dev)
+STRIPE_WEBHOOK_SECRET  = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 
 # Gmail SMTP — used for password reset OTP emails
 # Reads MAIL_USERNAME / MAIL_PASSWORD to match the existing .env convention.
@@ -40,12 +48,12 @@ TOKEN_ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY")
 if not TOKEN_ENCRYPTION_KEY:
     raise RuntimeError("TOKEN_ENCRYPTION_KEY environment variable is not set")
 
-# Validate required service credentials on startup
-if DATABASE_URL == "postgresql+psycopg2://user:password@localhost:5432/clau_db":
-    raise RuntimeError("DATABASE_URL must be set — default placeholder is not a valid production value")
-
-if not ALPACA_API_KEY:
-    raise RuntimeError("ALPACA_API_KEY environment variable is not set")
-
-if not STRIPE_SECRET_KEY:
-    raise RuntimeError("STRIPE_SECRET_KEY environment variable is not set")
+# Production-only hard requirements — crash fast on EC2 if anything is missing.
+# In development, missing third-party keys are tolerated (those features just won't work).
+if IS_PRODUCTION:
+    if DATABASE_URL == "postgresql+psycopg2://user:password@localhost:5432/clau_db":
+        raise RuntimeError("DATABASE_URL must be set to a real value in production")
+    if not ALPACA_API_KEY:
+        raise RuntimeError("ALPACA_API_KEY environment variable is not set")
+    if not STRIPE_SECRET_KEY:
+        raise RuntimeError("STRIPE_SECRET_KEY environment variable is not set")

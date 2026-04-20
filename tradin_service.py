@@ -1,5 +1,6 @@
 # tradin_service.py
 from decimal import Decimal
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from models import Wallet, Position, Trade, AlpacaToken
 from alpaca_client import get_quote, place_market_order, cancel_all_orders, get_alpaca_account, get_alpaca_positions
@@ -13,7 +14,7 @@ from crypto_utils import decrypt_token
 def get_or_create_wallet(db: Session, user_id: int) -> Wallet:
     wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
     if not wallet:
-        wallet = Wallet(user_id=user_id, balance=0.0)
+        wallet = Wallet(user_id=user_id, balance=Decimal(0))
         db.add(wallet)
         db.commit()
         db.refresh(wallet)
@@ -38,17 +39,20 @@ def get_alpaca_token(db: Session, user_id: int) -> str | None:
 
 def deposit(db: Session, user_id: int, amount: float) -> Wallet:
     wallet = get_or_create_wallet(db, user_id)
-    wallet.balance += amount
+    wallet.balance = (wallet.balance or Decimal(0)) + Decimal(str(amount))
     db.commit()
     db.refresh(wallet)
     return wallet
 
 
 def withdraw(db: Session, user_id: int, amount: float) -> Wallet | None:
-    wallet = get_or_create_wallet(db, user_id)
-    if wallet.balance < amount:
+    dec_amount = Decimal(str(amount))
+    # SELECT FOR UPDATE acquires a row lock so concurrent requests can't both pass
+    # the balance check before either has committed the deduction.
+    wallet = db.query(Wallet).filter(Wallet.user_id == user_id).with_for_update().first()
+    if not wallet or wallet.balance < dec_amount:
         return None
-    wallet.balance -= amount
+    wallet.balance = wallet.balance - dec_amount
     db.commit()
     db.refresh(wallet)
     return wallet
@@ -94,6 +98,26 @@ def execute_trade(db: Session, user_id: int, symbol: str, amount: float, side: s
 
     if side not in ("buy", "sell"):
         raise ValueError("Invalid side, must be 'buy' or 'sell'")
+
+    # --- Wash trade guard ---
+    # Reject a reversal on the same symbol within 60 seconds to prevent
+    # rapid buy-sell cycles that artificially inflate trade history / P&L.
+    opposite_side = "sell" if side == "buy" else "buy"
+    recent_opposite = (
+        db.query(Trade)
+        .filter(
+            Trade.user_id == user_id,
+            Trade.symbol == symbol,
+            Trade.side == opposite_side,
+            Trade.created_at >= datetime.utcnow() - timedelta(seconds=60),
+        )
+        .first()
+    )
+    if recent_opposite:
+        raise ValueError(
+            f"Cannot {side} {symbol} — you {opposite_side} it less than 60 seconds ago. "
+            "Please wait before reversing your position."
+        )
 
     # --- Place Alpaca order — Alpaca handles balance and position validation ---
     alpaca_order = place_market_order(symbol, qty, side, access_token)
